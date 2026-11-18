@@ -1,0 +1,18 @@
+# Render's free plan puts the app to sleep after 15 idle minutes and the first request then waits about a minute.
+# This pings the health URL every 10 minutes so a reviewer never hits that wait.
+# It does nothing until the repository variable LIVE_URL is set (Settings > Secrets and variables > Actions >
+# Variables), e.g. https://transporter-lane-assignment.onrender.com
+name: Keep alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.LIVE_URL != '' }}
+    steps:
+      - name: Ping health endpoint
+        run: curl --fail --silent --show-error --max-time 90 --retry 2 "${{ vars.LIVE_URL }}/actuator/health"
