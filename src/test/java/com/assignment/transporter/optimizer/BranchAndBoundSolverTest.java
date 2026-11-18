@@ -241,4 +241,95 @@ class BranchAndBoundSolverTest {
         assertValid(problem, 6, result.solution());
         assertThat(result.solution().totalCost()).isLessThanOrEqualTo(greedy.solution().totalCost());
     }
+
+    // ---------------------------------------------------------------- ties must not make the search run away
+
+    /** The production settings (see application.properties), so these tests see what a request would see. */
+    private final AssignmentSolver productionSolver =
+            new BranchAndBoundSolver(new GreedyLocalSearchSolver(10_000_000), 25_000_000);
+
+    @Test
+    void agreesWithBruteForceWhenQuotesTieHeavily() {
+        Random random = new Random(808);
+        BruteForceSolver oracle = new BruteForceSolver();
+
+        for (int i = 0; i < 600; i++) {
+            AssignmentProblem problem = ProblemFixtures.random(random, 8, 8, 2); // costs of 1 or 2: almost all ties
+            int maxTransporters = 1 + random.nextInt(problem.transporterCount());
+
+            SolverResult expected = oracle.solve(problem, maxTransporters);
+            SolverResult actual = solver.solve(problem, maxTransporters);
+
+            assertThat(actual.status()).as("problem %d", i).isEqualTo(expected.status());
+            if (expected.solution() != null) {
+                assertThat(actual.solution().totalCost()).as("problem %d", i).isEqualTo(expected.solution().totalCost());
+                assertThat(actual.solution().selectedTransporters()).as("problem %d", i)
+                        .hasSameSizeAs(expected.solution().selectedTransporters());
+                assertValid(problem, maxTransporters, actual.solution());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void fiveLanesAndTwoHundredTransportersAllQuotingTheSamePriceIsInstant() {
+        // Found in review: this took 45 s once ties were shared out, with the answer obvious from the start.
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (long lane = 1; lane <= 5; lane++) {
+            builder.lane(lane);
+            for (long transporter = 1; transporter <= 200; transporter++) {
+                builder.quote(transporter, lane, 5_000);
+            }
+        }
+
+        SolverResult result = productionSolver.solve(builder.build(), 200);
+
+        assertThat(result.status()).isEqualTo(Status.OPTIMAL);
+        assertThat(result.solution().totalCost()).isEqualTo(25_000);
+        assertThat(result.solution().selectedTransporters()).hasSize(5);
+        assertThat(result.nodesExplored()).isLessThan(1_000);
+    }
+
+    @ParameterizedTest(name = "50 lanes x 200 transporters, 5 distinct prices, limit {0}")
+    @ValueSource(ints = {100, 200})
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void fewDistinctPricesOnAWideTableStayWithinTheBudget(int limit) {
+        Random random = new Random(limit);
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (long lane = 1; lane <= 50; lane++) {
+            builder.lane(lane);
+            for (long transporter = 1; transporter <= 200; transporter++) {
+                builder.quote(transporter, lane, 1_000L * (1 + random.nextInt(5)));
+            }
+        }
+        AssignmentProblem problem = builder.build();
+        long started = System.nanoTime();
+
+        SolverResult result = productionSolver.solve(problem, limit);
+
+        System.out.println("5 prices, 50x200, limit " + limit + ": " + result.status() + " in "
+                + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) + " ms");
+        assertThat(result.solutionIfAny()).isPresent();
+        assertValid(problem, limit, result.solution());
+        assertThat(result.solution().totalCost()).isEqualTo(50_000); // every lane gets a price-1000 transporter
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aStarOfTiedTransportersFindsTheTwoThatCanBeUsedAndStops() {
+        // T1 quotes all 50 lanes; T2..T200 quote only lane 1; every quote is 1000. Only two can ever be used.
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (long lane = 1; lane <= 50; lane++) {
+            builder.lane(lane).quote(1, lane, 1_000);
+        }
+        for (long transporter = 2; transporter <= 200; transporter++) {
+            builder.quote(transporter, 1, 1_000);
+        }
+
+        SolverResult result = productionSolver.solve(builder.build(), 100);
+
+        assertThat(result.status()).isEqualTo(Status.OPTIMAL);
+        assertThat(result.solution().totalCost()).isEqualTo(50_000);
+        assertThat(result.solution().selectedTransporters()).hasSize(2).contains(1L);
+    }
 }

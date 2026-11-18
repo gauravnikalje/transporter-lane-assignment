@@ -21,6 +21,6 @@ public record TransporterProperties(@DefaultValue Solver solver, @DefaultValue L
     /** Size caps that protect a small server from huge payloads. */
     public record Limits(@DefaultValue("2000") int maxLanes, @DefaultValue("200") int maxTransporters,
                          @DefaultValue("10000") int maxQuotes, @DefaultValue("200000") long maxMatrixCells,
-                         @DefaultValue("2097152") long maxBodyBytes) {
+                         @DefaultValue("1048576") long maxBodyBytes) {
     }
 }

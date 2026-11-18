@@ -39,10 +39,20 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
      * <p>Empty when some lane has no quote from any chosen transporter.
      */
     public static Optional<AssignmentSolution> fromChosen(AssignmentProblem problem, int[] chosenTransporterIndices) {
+        return fromChosen(problem, chosenTransporterIndices, new long[1]);
+    }
+
+    /**
+     * Same as {@link #fromChosen(AssignmentProblem, int[])}, and adds the number of lane evaluations it spent to
+     * {@code work[0]} so that a budgeted search can charge for it.
+     */
+    public static Optional<AssignmentSolution> fromChosen(AssignmentProblem problem, int[] chosenTransporterIndices,
+                                                          long[] work) {
         // Index order equals id order, so sorted indices are sorted ids.
         int[] chosen = chosenTransporterIndices.clone();
         Arrays.sort(chosen);
         int lanes = problem.laneCount();
+        work[0] += 2L * (chosen.length + 1) * lanes; // cheapest-per-lane scan, tie scan, building the answer
 
         long[] cheapest = new long[lanes];
         Arrays.fill(cheapest, NO_QUOTE);
@@ -74,7 +84,7 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
             anyTie |= count > 1;
         }
         if (anyTie) {
-            spreadAcrossTransporters(problem, chosen, cheapest, owner);
+            spreadAcrossTransporters(problem, chosen, cheapest, owner, work);
         }
 
         Map<Long, Long> transporterByLane = new TreeMap<>();
@@ -93,8 +103,10 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
      * matched transporter; every other lane keeps its lowest-id tied transporter, which is always one already
      * used, otherwise the matching could have been extended.
      */
-    private static void spreadAcrossTransporters(AssignmentProblem problem, int[] chosen, long[] cheapest, int[] owner) {
+    private static void spreadAcrossTransporters(AssignmentProblem problem, int[] chosen, long[] cheapest, int[] owner,
+                                                 long[] work) {
         int lanes = cheapest.length;
+        work[0] += (long) chosen.length * lanes;
         int[][] tiedLanes = new int[chosen.length][];
         for (int p = 0; p < chosen.length; p++) {
             int[] buffer = new int[lanes];
@@ -111,7 +123,7 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
         Arrays.fill(matchedTransporter, -1);
         int[] visitedStamp = new int[lanes];
         for (int p = 0; p < chosen.length; p++) {
-            augment(p, tiedLanes, matchedTransporter, visitedStamp, p + 1);
+            augment(p, tiedLanes, matchedTransporter, visitedStamp, p + 1, work);
         }
         for (int lane = 0; lane < lanes; lane++) {
             if (matchedTransporter[lane] >= 0) {
@@ -121,7 +133,8 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
     }
 
     private static boolean augment(int transporter, int[][] tiedLanes, int[] matchedTransporter, int[] visitedStamp,
-                                   int stamp) {
+                                   int stamp, long[] work) {
+        work[0] += 2L * tiedLanes[transporter].length;
         for (int lane : tiedLanes[transporter]) {
             if (matchedTransporter[lane] < 0) {
                 matchedTransporter[lane] = transporter;
@@ -133,7 +146,7 @@ public record AssignmentSolution(long totalCost, Map<Long, Long> transporterByLa
                 continue;
             }
             visitedStamp[lane] = stamp;
-            if (augment(matchedTransporter[lane], tiedLanes, matchedTransporter, visitedStamp, stamp)) {
+            if (augment(matchedTransporter[lane], tiedLanes, matchedTransporter, visitedStamp, stamp, work)) {
                 matchedTransporter[lane] = transporter;
                 return true;
             }

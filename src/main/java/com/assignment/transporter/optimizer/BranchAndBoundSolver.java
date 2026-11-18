@@ -17,14 +17,16 @@ import static com.assignment.transporter.optimizer.AssignmentProblem.NO_QUOTE;
  *   <li>The heuristic seed gives a strong first answer to prune against.</li>
  *   <li>Lower bound at each node: every lane at the cheaper of its current quote and the cheapest quote still
  *       available deeper in the tree. Branches that cannot beat the best answer are cut.</li>
- *   <li>Upper bound on transporters used: those chosen so far plus the picks still allowed. A branch that cannot
- *       beat the best answer on cost, or tie it on cost while using more transporters, is cut.</li>
+ *   <li>Upper bound on transporters used: those chosen so far plus the picks still allowed, and never more than the
+ *       largest matching of transporters to the lanes they quoted ({@link UsageBound}). A branch that cannot beat
+ *       the best answer on cost, or tie it on cost while using more transporters, is cut.</li>
  *   <li>Choosing a transporter that is dearer than the current choice on every lane it quotes is skipped: it can
  *       never win or tie a lane, so the answer is the same as leaving it out.</li>
  * </ul>
  *
- * <p>The work budget caps lane evaluations (nodes x lanes). If it runs out, the best answer so far is returned
- * as {@link SolverResult.Status#FEASIBLE} instead of {@link SolverResult.Status#OPTIMAL}.
+ * <p>The work budget caps lane evaluations: every node costs a scan of the lanes, and every complete choice costs
+ * what it takes to build its answer, tie sharing included. If it runs out, the best answer so far is returned as
+ * {@link SolverResult.Status#FEASIBLE} instead of {@link SolverResult.Status#OPTIMAL}.
  */
 public final class BranchAndBoundSolver implements AssignmentSolver {
 
@@ -33,7 +35,7 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
 
     /**
      * @param seedSolver gives the first answer to prune against
-     * @param workBudget maximum lane evaluations; the search may visit {@code workBudget / laneCount} nodes
+     * @param workBudget maximum lane evaluations
      */
     public BranchAndBoundSolver(AssignmentSolver seedSolver, long workBudget) {
         if (workBudget < 1) {
@@ -52,9 +54,8 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
         }
 
         AssignmentSolution seed = seedSolver.solve(problem, maxTransporters).solution();
-        long nodeBudget = Math.max(1, workBudget / Math.max(1, problem.laneCount()));
         Search search = new Search(problem, Math.min(maxTransporters, problem.transporterCount()), required,
-                nodeBudget, seed);
+                workBudget, seed);
         search.run();
 
         if (search.budgetExhausted) {
@@ -68,7 +69,8 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
         private final AssignmentProblem problem;
         private final int limit;
         private final RequiredTransporters required;
-        private final long nodeBudget;
+        private final long workBudget;
+        private final int maxUsable;
         private final int transporters;
         private final int lanes;
         private final int[] order;
@@ -77,16 +79,18 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
         private final int[] chosen;
 
         private int chosenCount;
+        private long work;
         private long nodes;
         private boolean budgetExhausted;
         private AssignmentSolution best;
 
-        Search(AssignmentProblem problem, int limit, RequiredTransporters required, long nodeBudget,
+        Search(AssignmentProblem problem, int limit, RequiredTransporters required, long workBudget,
                AssignmentSolution seed) {
             this.problem = problem;
             this.limit = limit;
             this.required = required;
-            this.nodeBudget = nodeBudget;
+            this.workBudget = workBudget;
+            this.maxUsable = UsageBound.maxDistinctTransporters(problem);
             this.transporters = problem.transporterCount();
             this.lanes = problem.laneCount();
             this.order = searchOrder(problem, required);
@@ -105,7 +109,9 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
             if (budgetExhausted) {
                 return;
             }
-            if (++nodes > nodeBudget) {
+            nodes++;
+            work += lanes + 1;
+            if (work > workBudget) {
                 budgetExhausted = true;
                 return;
             }
@@ -123,7 +129,8 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
                 if (bound > best.totalCost()) {
                     return;
                 }
-                int mostUsed = chosenCount + (canAdd ? Math.min(limit - chosenCount, transporters - depth) : 0);
+                int mostUsed = Math.min(maxUsable,
+                        chosenCount + (canAdd ? Math.min(limit - chosenCount, transporters - depth) : 0));
                 if (bound == best.totalCost() && mostUsed <= best.selectedTransporters().size()) {
                     return; // cannot be cheaper, and cannot use more transporters
                 }
@@ -158,9 +165,11 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
         }
 
         private void consider() {
-            AssignmentSolution.fromChosen(problem, Arrays.copyOf(chosen, chosenCount))
+            long[] spent = new long[1];
+            AssignmentSolution.fromChosen(problem, Arrays.copyOf(chosen, chosenCount), spent)
                     .filter(candidate -> candidate.isBetterThan(best))
                     .ifPresent(candidate -> best = candidate);
+            work += spent[0];
         }
 
         /** Required transporters first, then those that are cheapest on the most lanes. */
