@@ -15,7 +15,7 @@ import java.util.TreeSet;
  * <p>Lanes and transporters are stored in ascending id order, so index order equals id order. Every solver
  * relies on that to break ties the same way (an equal quote goes to the lower transporter id).
  *
- * <p>Costs are plain {@code long} values in whatever unit the caller chooses (the service uses paise).
+ * <p>Costs are plain {@code long} values in whatever unit the caller chooses (the service uses whole rupees).
  */
 public final class AssignmentProblem {
 
