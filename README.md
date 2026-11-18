@@ -5,7 +5,7 @@ transporters**, with **every lane covered**.
 
 | | |
 |---|---|
-| **Live app / Swagger UI** | <LIVE_URL> (the root URL opens Swagger) |
+| **Live app / Swagger UI** | [https://transporter-lane-assignment-62rl.onrender.com](https://transporter-lane-assignment-62rl.onrender.com) (the root URL opens Swagger; free hosting, so the first request after a quiet spell can take up to a minute) |
 | **Postman collection** | [`postman/Transporter-Assignment.postman_collection.json`](postman/Transporter-Assignment.postman_collection.json) |
 | **Stack** | Java 17, Spring Boot 4.1, Spring Data JPA, H2, springdoc-openapi, JUnit 5, JaCoCo |
 
