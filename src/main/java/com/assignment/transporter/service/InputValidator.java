@@ -12,11 +12,22 @@ import com.assignment.transporter.api.dto.LaneDto;
 import com.assignment.transporter.api.dto.LaneQuoteDto;
 import com.assignment.transporter.api.dto.TransporterDto;
 import com.assignment.transporter.config.TransporterProperties;
+import com.assignment.transporter.service.exception.FieldValidationException;
 import com.assignment.transporter.service.exception.InputValidationException;
 
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
+
 /**
- * Rules that need the whole payload, beyond the field-level checks on the DTOs: unique ids, quotes that point at
- * real lanes, no repeated quotes, and size caps.
+ * Validates a submitted input in three steps, cheapest first, so a hostile body cannot make the expensive steps run
+ * on millions of elements:
+ * <ol>
+ *   <li><b>Sizes</b>: how many lanes, transporters and quotes, counted without looking inside them.</li>
+ *   <li><b>Fields</b>: the Bean Validation rules on the DTOs (required, not blank, above zero, at most 1 trillion).
+ *       Only reached when the sizes are within the caps, so it sees a bounded number of elements.</li>
+ *   <li><b>Whole payload</b>: unique ids, quotes that point at real lanes, no repeated quotes.</li>
+ * </ol>
+ * Every list of messages is capped, so the response stays small however bad the body is.
  */
 @Component
 public class InputValidator {
@@ -24,9 +35,11 @@ public class InputValidator {
     private static final int MAX_MESSAGES = 20;
 
     private final TransporterProperties.Limits limits;
+    private final Validator fieldValidator;
 
-    public InputValidator(TransporterProperties properties) {
+    public InputValidator(TransporterProperties properties, Validator fieldValidator) {
         this.limits = properties.limits();
+        this.fieldValidator = fieldValidator;
     }
 
     public void validate(InputRequest request) {
@@ -34,6 +47,11 @@ public class InputValidator {
         checkSizes(request, errors);
         if (!errors.isEmpty()) {
             throw new InputValidationException(errors);
+        }
+
+        List<String> fieldErrors = fieldErrors(request);
+        if (!fieldErrors.isEmpty()) {
+            throw new FieldValidationException(fieldErrors);
         }
 
         Set<Long> laneIds = new HashSet<>();
@@ -69,23 +87,51 @@ public class InputValidator {
         }
     }
 
+    /** Counts only; safe on null lists and null entries, which the field step reports later. */
     private void checkSizes(InputRequest request, List<String> errors) {
-        if (request.lanes().size() > limits.maxLanes()) {
-            errors.add("At most " + limits.maxLanes() + " lanes are accepted, got " + request.lanes().size());
+        int lanes = sizeOf(request.lanes());
+        int transporters = sizeOf(request.transporters());
+        long quotes = 0;
+        if (request.transporters() != null) {
+            for (TransporterDto transporter : request.transporters()) {
+                quotes += transporter == null ? 0 : sizeOf(transporter.laneQuotes());
+            }
         }
-        if (request.transporters().size() > limits.maxTransporters()) {
-            errors.add("At most " + limits.maxTransporters() + " transporters are accepted, got "
-                    + request.transporters().size());
+
+        if (lanes > limits.maxLanes()) {
+            errors.add("At most " + limits.maxLanes() + " lanes are accepted, got " + lanes);
         }
-        long cells = (long) request.lanes().size() * request.transporters().size();
+        if (transporters > limits.maxTransporters()) {
+            errors.add("At most " + limits.maxTransporters() + " transporters are accepted, got " + transporters);
+        }
+        long cells = (long) lanes * transporters;
         if (cells > limits.maxMatrixCells()) {
             errors.add("Lanes x transporters must be at most " + limits.maxMatrixCells() + ", got "
-                    + request.lanes().size() + " x " + request.transporters().size() + " = " + cells);
+                    + lanes + " x " + transporters + " = " + cells);
         }
-        long quotes = request.transporters().stream().mapToLong(t -> t.laneQuotes().size()).sum();
         if (quotes > limits.maxQuotes()) {
             errors.add("At most " + limits.maxQuotes() + " quotes are accepted in total, got " + quotes);
         }
+    }
+
+    private List<String> fieldErrors(InputRequest request) {
+        List<String> all = new ArrayList<>();
+        for (ConstraintViolation<InputRequest> violation : fieldValidator.validate(request)) {
+            // "lanes[0].<list element>" is Hibernate Validator's name for a null entry of the list
+            String path = violation.getPropertyPath().toString().replace(".<list element>", "");
+            all.add(path + " " + violation.getMessage());
+        }
+        all.sort(null);
+        if (all.size() <= MAX_MESSAGES) {
+            return all;
+        }
+        List<String> capped = new ArrayList<>(all.subList(0, MAX_MESSAGES));
+        capped.add("... and " + (all.size() - MAX_MESSAGES) + " more");
+        return capped;
+    }
+
+    private static int sizeOf(List<?> list) {
+        return list == null ? 0 : list.size();
     }
 
     /** Stops after a screenful so a huge broken payload does not produce a huge response. */

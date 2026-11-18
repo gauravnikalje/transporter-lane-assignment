@@ -57,7 +57,8 @@ public class TransporterController {
     @ApiResponse(responseCode = "400", description = "Invalid input: bad JSON, missing fields, duplicate ids, "
             + "a quote for an unknown lane", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping(path = "/input", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public InputResponse submitInput(@Valid @RequestBody InputRequest request) {
+    public InputResponse submitInput(@RequestBody InputRequest request) {
+        // No @Valid here: the input service validates in a safe order (sizes before fields), see InputValidator.
         inputService.save(request);
         return InputResponse.saved();
     }

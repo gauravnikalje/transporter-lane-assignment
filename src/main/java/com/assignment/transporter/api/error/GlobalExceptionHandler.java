@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import com.assignment.transporter.service.exception.FieldValidationException;
 import com.assignment.transporter.service.exception.InfeasibleAssignmentException;
 import com.assignment.transporter.service.exception.InputValidationException;
 import com.assignment.transporter.service.exception.NoInputDataException;
@@ -37,6 +38,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InputValidationException.class)
     ResponseEntity<ErrorResponse> inputInvalid(InputValidationException ex) {
         return ResponseEntity.badRequest().body(ErrorResponse.of("INVALID_INPUT", ex.getMessage(), ex.errors()));
+    }
+
+    @ExceptionHandler(FieldValidationException.class)
+    ResponseEntity<ErrorResponse> fieldsInvalid(FieldValidationException ex) {
+        return ResponseEntity.badRequest().body(ErrorResponse.of("VALIDATION_FAILED", ex.getMessage(), ex.errors()));
     }
 
     @ExceptionHandler(NoInputDataException.class)
@@ -68,6 +74,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                                                                   WebRequest request) {
         List<String> errors = ex.getBindingResult().getFieldErrors().stream()
                 .sorted(Comparator.comparing(FieldError::getField))
+                .limit(20)
                 .map(error -> error.getField() + " " + error.getDefaultMessage())
                 .toList();
         return body(HttpStatus.BAD_REQUEST, ErrorResponse.of("VALIDATION_FAILED", "The request is not valid.", errors));

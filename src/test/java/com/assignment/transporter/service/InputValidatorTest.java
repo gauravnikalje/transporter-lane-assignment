@@ -18,9 +18,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InputValidatorTest {
 
+    private static final jakarta.validation.Validator FIELDS =
+            jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator();
+
     private final InputValidator validator = new InputValidator(
             new TransporterProperties(new TransporterProperties.Solver(1_000, 1_000, 1_000),
-                    new TransporterProperties.Limits(3, 3, 4, 1_000, 1_000_000)));
+                    new TransporterProperties.Limits(3, 3, 4, 1_000, 1_000_000)), FIELDS);
 
     private static LaneDto lane(long id) {
         return new LaneDto(id, "From " + id, "To " + id);
@@ -75,12 +78,47 @@ class InputValidatorTest {
     void enforcesTheTableSizeCap() {
         InputValidator tight = new InputValidator(new TransporterProperties(
                 new TransporterProperties.Solver(1_000, 1_000, 1_000),
-                new TransporterProperties.Limits(100, 100, 1_000, 5, 1_000_000)));
+                new TransporterProperties.Limits(100, 100, 1_000, 5, 1_000_000)), FIELDS);
         InputRequest request = new InputRequest(List.of(lane(1), lane(2), lane(3)),
                 List.of(transporter(1, quote(1, 1)), transporter(2, quote(2, 1))));
 
         assertThat(errorsOf(request, tight))
                 .containsExactly("Lanes x transporters must be at most 5, got 3 x 2 = 6");
+    }
+
+    @Test
+    void checksSizesBeforeLookingAtFields() {
+        // Five null lanes against a cap of three: reported as a size problem, without validating the entries.
+        InputRequest request = new InputRequest(java.util.Arrays.asList(null, null, null, null, null),
+                List.of(transporter(1)));
+
+        assertThatThrownBy(() -> validator.validate(request)).isInstanceOf(InputValidationException.class);
+    }
+
+    @Test
+    void reportsFieldProblemsWithinTheSizeCaps() {
+        InputRequest request = new InputRequest(java.util.Arrays.asList(null, new LaneDto(2L, " ", "To")),
+                List.of(transporter(1)));
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOfSatisfying(com.assignment.transporter.service.exception.FieldValidationException.class,
+                        ex -> assertThat(ex.errors()).containsExactly(
+                                "lanes[0] must not be null", "lanes[1].origin must not be blank"));
+    }
+
+    @Test
+    void capsTheFieldMessages() {
+        InputValidator wide = new InputValidator(new TransporterProperties(
+                new TransporterProperties.Solver(1_000, 1_000, 1_000),
+                new TransporterProperties.Limits(100, 100, 1_000, 100_000, 1_000_000)), FIELDS);
+        List<LaneDto> broken = IntStream.range(0, 30).mapToObj(i -> new LaneDto(null, null, null)).toList();
+        InputRequest request = new InputRequest(broken, List.of(transporter(1)));
+
+        assertThatThrownBy(() -> wide.validate(request))
+                .isInstanceOfSatisfying(com.assignment.transporter.service.exception.FieldValidationException.class, ex -> {
+                    assertThat(ex.errors()).hasSize(21);
+                    assertThat(ex.errors().get(20)).isEqualTo("... and 70 more");
+                });
     }
 
     @Test
@@ -95,7 +133,7 @@ class InputValidatorTest {
     void capsTheNumberOfMessages() {
         InputValidator wide = new InputValidator(new TransporterProperties(
                 new TransporterProperties.Solver(1_000, 1_000, 1_000),
-                new TransporterProperties.Limits(100, 100, 1_000, 100_000, 1_000_000)));
+                new TransporterProperties.Limits(100, 100, 1_000, 100_000, 1_000_000)), FIELDS);
         List<LaneQuoteDto> unknownLanes = IntStream.rangeClosed(1, 50).mapToObj(i -> quote(1_000 + i, 1)).toList();
         InputRequest request = new InputRequest(List.of(lane(1)),
                 List.of(new TransporterDto(1L, "T1", unknownLanes)));

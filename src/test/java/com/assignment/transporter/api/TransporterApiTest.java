@@ -1,7 +1,10 @@
 package com.assignment.transporter.api;
 
 import org.junit.jupiter.api.BeforeEach;
+import java.util.concurrent.TimeUnit;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +18,7 @@ import com.assignment.transporter.repository.LaneRepository;
 import com.assignment.transporter.repository.QuoteRepository;
 import com.assignment.transporter.repository.TransporterRepository;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -412,6 +416,44 @@ class TransporterApiTest {
                 {"lanes": [{"id": 1, "origin": "  Mumbai ", "destination": "Delhi"}],
                  "transporters": [{"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": 10}]}]}""")
                 .andExpect(status().isOk());
+    }
+
+    // ---------------------------------------------------------------- hostile bodies (found in review)
+
+    private static final String ONE_TRANSPORTER = "\"transporters\":[{\"id\":1,\"name\":\"T\",\"laneQuotes\":[]}]";
+
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
+    void aBodyOfThousandsOfEmptyObjectsIsRejectedQuicklyWithASmallResponse() throws Exception {
+        // 30,000 lanes of {}: used to build about a million violation objects and could exhaust the heap.
+        String body = "{\"lanes\":[" + "{},".repeat(29_999) + "{}]," + ONE_TRANSPORTER + "}";
+
+        String response = submit(body).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_INPUT"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response.length()).isLessThan(1_000);
+    }
+
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
+    void aBodyOfHundredsOfThousandsOfNullEntriesIsRejectedQuickly() throws Exception {
+        // 100,000 nulls: the validator's cost grew faster than the number of entries and took minutes.
+        String body = "{\"lanes\":[" + "null,".repeat(99_999) + "null]," + ONE_TRANSPORTER + "}";
+
+        submit(body).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_INPUT"));
+    }
+
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
+    void manyBadFieldsStillGiveAShortErrorList() throws Exception {
+        // 1,500 lanes (inside the cap) that are all {}: every field is missing, but only 20 messages come back.
+        String body = "{\"lanes\":[" + "{},".repeat(1_499) + "{}]," + ONE_TRANSPORTER + "}";
+
+        submit(body).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors", hasSize(21)))
+                .andExpect(jsonPath("$.errors[20]").value(containsString("more")));
     }
 
     // ---------------------------------------------------------------- framework errors use the same shape
