@@ -122,8 +122,59 @@ class BranchAndBoundSolverTest {
             SolverResult actual = solver.solve(problem, maxTransporters);
 
             assertThat(actual.status()).as("problem %d", i).isEqualTo(expected.status());
-            assertThat(actual.solution()).as("problem %d", i).isEqualTo(expected.solution());
+            if (expected.solution() != null) {
+                // Same cost and same number of transporters used. Which of several equally good id sets is
+                // returned depends on search order, so the ids themselves are not compared.
+                assertThat(actual.solution().totalCost()).as("problem %d", i).isEqualTo(expected.solution().totalCost());
+                assertThat(actual.solution().selectedTransporters()).as("problem %d", i)
+                        .hasSameSizeAs(expected.solution().selectedTransporters());
+                assertValid(problem, maxTransporters, actual.solution());
+            }
         }
+    }
+
+    @Test
+    void usesMoreTransportersWhenQuotesTie() {
+        AssignmentProblem problem = AssignmentProblem.builder().lane(1).lane(2)
+                .quote(1, 1, 100).quote(1, 2, 100).quote(2, 1, 100).quote(2, 2, 100).build();
+
+        AssignmentSolution solution = solver.solve(problem, 2).solution();
+
+        assertThat(solution.totalCost()).isEqualTo(200);
+        assertThat(solution.selectedTransporters()).containsExactly(1L, 2L);
+        assertThat(solution.transporterByLane()).isEqualTo(lanesTo(1, 1, 2, 2));
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void finishesQuicklyAndProvesOptimalWhenEveryQuoteIsEqual() {
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (long transporter = 1; transporter <= 15; transporter++) {
+            for (long lane = 1; lane <= 12; lane++) {
+                builder.lane(lane).quote(transporter, lane, 100);
+            }
+        }
+
+        SolverResult result = solver.solve(builder.build(), 4);
+
+        assertThat(result.status()).isEqualTo(Status.OPTIMAL);
+        assertThat(result.solution().totalCost()).isEqualTo(1_200);
+        assertThat(result.solution().selectedTransporters()).hasSize(4);
+        assertThat(result.nodesExplored()).isLessThan(1_000);
+    }
+
+    @Test
+    void hugeQuotesNeitherOverflowNorChangeTheAnswer() {
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (long lane = 1; lane <= 3; lane++) {
+            builder.lane(lane).quote(1, lane, 1).quote(2, lane, AssignmentProblem.MAX_COST);
+        }
+
+        SolverResult result = solver.solve(builder.build(), 2);
+
+        assertThat(result.status()).isEqualTo(Status.OPTIMAL);
+        assertThat(result.solution().totalCost()).isEqualTo(3);
+        assertThat(result.solution().selectedTransporters()).containsExactly(1L);
     }
 
     @Test

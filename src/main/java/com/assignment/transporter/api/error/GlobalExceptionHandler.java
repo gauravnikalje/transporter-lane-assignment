@@ -77,6 +77,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
                                                                   HttpHeaders headers, HttpStatusCode status,
                                                                   WebRequest request) {
+        for (Throwable cause = ex.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof PayloadTooLargeException tooLarge) {
+                return body(HttpStatus.PAYLOAD_TOO_LARGE,
+                        ErrorResponse.of("PAYLOAD_TOO_LARGE", tooLarge.getMessage()));
+            }
+        }
         String where = ex.getCause() instanceof JacksonException jackson ? pathOf(jackson) : "";
         String message = where.isEmpty()
                 ? "The request body is missing or is not valid JSON."

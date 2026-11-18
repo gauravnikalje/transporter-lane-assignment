@@ -17,7 +17,10 @@ import static com.assignment.transporter.optimizer.AssignmentProblem.NO_QUOTE;
  *   <li>The heuristic seed gives a strong first answer to prune against.</li>
  *   <li>Lower bound at each node: every lane at the cheaper of its current quote and the cheapest quote still
  *       available deeper in the tree. Branches that cannot beat the best answer are cut.</li>
- *   <li>Choosing a transporter that would win no lane is skipped (it gives the same answer as leaving it out).</li>
+ *   <li>Upper bound on transporters used: those chosen so far plus the picks still allowed. A branch that cannot
+ *       beat the best answer on cost, or tie it on cost while using more transporters, is cut.</li>
+ *   <li>Choosing a transporter that is dearer than the current choice on every lane it quotes is skipped: it can
+ *       never win or tie a lane, so the answer is the same as leaving it out.</li>
  * </ul>
  *
  * <p>The work budget caps lane evaluations (nodes x lanes). If it runs out, the best answer so far is returned
@@ -95,12 +98,10 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
         void run() {
             long[] cheapest = new long[lanes];
             Arrays.fill(cheapest, NO_QUOTE);
-            int[] owner = new int[lanes];
-            Arrays.fill(owner, -1);
-            visit(0, cheapest, owner);
+            visit(0, cheapest);
         }
 
-        private void visit(int depth, long[] cheapest, int[] owner) {
+        private void visit(int depth, long[] cheapest) {
             if (budgetExhausted) {
                 return;
             }
@@ -123,8 +124,8 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
                     return;
                 }
                 int mostUsed = chosenCount + (canAdd ? Math.min(limit - chosenCount, transporters - depth) : 0);
-                if (bound == best.totalCost() && mostUsed < best.selectedTransporters().size()) {
-                    return;
+                if (bound == best.totalCost() && mostUsed <= best.selectedTransporters().size()) {
+                    return; // cannot be cheaper, and cannot use more transporters
                 }
             }
 
@@ -135,26 +136,24 @@ public final class BranchAndBoundSolver implements AssignmentSolver {
 
             int transporter = order[depth];
             long[] nextCheapest = cheapest.clone();
-            int[] nextOwner = owner.clone();
-            boolean winsALane = false;
+            boolean canWinOrTieALane = false;
             for (int lane = 0; lane < lanes; lane++) {
                 long cost = problem.cost(transporter, lane);
                 if (cost == NO_QUOTE) {
                     continue;
                 }
-                if (cost < nextCheapest[lane] || (cost == nextCheapest[lane] && transporter < nextOwner[lane])) {
+                if (cost <= nextCheapest[lane]) {
                     nextCheapest[lane] = cost;
-                    nextOwner[lane] = transporter;
-                    winsALane = true;
+                    canWinOrTieALane = true;
                 }
             }
-            if (winsALane) {
+            if (canWinOrTieALane) {
                 chosen[chosenCount++] = transporter;
-                visit(depth + 1, nextCheapest, nextOwner);
+                visit(depth + 1, nextCheapest);
                 chosenCount--;
             }
             if (!required.isRequired(transporter)) {
-                visit(depth + 1, cheapest, owner);
+                visit(depth + 1, cheapest);
             }
         }
 

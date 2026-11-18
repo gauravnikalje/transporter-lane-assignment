@@ -9,17 +9,21 @@ import java.util.OptionalInt;
  * infeasible request can say how many transporters it would need.
  *
  * <p>Iterative deepening: try 1, 2, 3... transporters. At each step branch on the uncovered lane with the fewest
- * bidders, since any cover must include one of them. Empty when a lane has no bidder or the budget runs out.
+ * bidders, since any cover must include one of them. Empty when a lane has no bidder or the work budget runs out.
+ *
+ * <p>The budget counts lane evaluations (each search step scans every lane), so the time spent is bounded no
+ * matter how many lanes there are.
  */
 public final class CoverageAnalyzer {
 
-    private final long nodeBudget;
+    private final long workBudget;
 
-    public CoverageAnalyzer(long nodeBudget) {
-        if (nodeBudget < 1) {
-            throw new IllegalArgumentException("nodeBudget must be at least 1");
+    /** @param workBudget maximum lane evaluations */
+    public CoverageAnalyzer(long workBudget) {
+        if (workBudget < 1) {
+            throw new IllegalArgumentException("workBudget must be at least 1");
         }
-        this.nodeBudget = nodeBudget;
+        this.workBudget = workBudget;
     }
 
     public OptionalInt minimumTransportersToCover(AssignmentProblem problem) {
@@ -60,7 +64,7 @@ public final class CoverageAnalyzer {
 
         private final AssignmentProblem problem;
         private final int[][] bidders;
-        private long nodes;
+        private long work;
 
         Search(AssignmentProblem problem, int[][] bidders) {
             this.problem = problem;
@@ -68,7 +72,9 @@ public final class CoverageAnalyzer {
         }
 
         Outcome canCover(int picksLeft, boolean[] covered, int coveredCount) {
-            if (++nodes > nodeBudget) {
+            // One call scans the lanes to find the hardest one, and its parent copied the array: charge both.
+            work += 2L * covered.length;
+            if (work > workBudget) {
                 return Outcome.OUT_OF_BUDGET;
             }
             if (coveredCount == covered.length) {

@@ -25,10 +25,10 @@ public class TransporterInputService {
         validator.validate(request);
 
         List<LaneEntity> lanes = request.lanes().stream()
-                .map(lane -> new LaneEntity(lane.id(), lane.origin().strip(), lane.destination().strip()))
+                .map(lane -> new LaneEntity(lane.id(), lane.origin(), lane.destination()))
                 .toList();
         List<TransporterEntity> transporters = request.transporters().stream()
-                .map(transporter -> new TransporterEntity(transporter.id(), transporter.name().strip()))
+                .map(transporter -> new TransporterEntity(transporter.id(), transporter.name()))
                 .toList();
         List<QuoteEntity> quotes = request.transporters().stream()
                 .flatMap(transporter -> transporter.laneQuotes().stream()

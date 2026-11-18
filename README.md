@@ -77,12 +77,15 @@ Every failure has one shape: `{"status": "error", "code": "...", "message": "...
 
 | HTTP | `code` | When |
 |---|---|---|
-| 400 | `VALIDATION_FAILED` | Missing or blank fields, quote ≤ 0, `maxTransporters` < 1. `errors` lists each field. |
+| 400 | `VALIDATION_FAILED` | Missing or blank fields, quote ≤ 0 or above 1 trillion, `maxTransporters` < 1. `errors` lists each field. |
 | 400 | `INVALID_INPUT` | Duplicate lane or transporter ids, a quote for a lane that is not in the request, the same lane quoted twice, size caps exceeded. |
-| 400 | `MALFORMED_REQUEST` | Not JSON, wrong type, or a decimal quote such as `5000.75` (rejected, never rounded). Names the bad field. |
+| 400 | `MALFORMED_REQUEST` | Not JSON, or the wrong type: a number sent as text (`"5000"`) or a decimal quote such as `5000.75` (rejected, never rounded). Names the bad field. |
 | 409 | `NO_INPUT_DATA` | Assignment requested before any input. |
+| 413 | `PAYLOAD_TOO_LARGE` | Request body above 2 MB. Refused before it is parsed. |
 | 422 | `NO_FEASIBLE_ASSIGNMENT` | No set of ≤ N transporters covers every lane. Says how many are needed, or which lane nobody quoted. |
+| 422 | `SEARCH_LIMIT_REACHED` | A very large input used up the search budget before any valid assignment was found. |
 | 405 / 415 / 404 | `METHOD_NOT_ALLOWED` ... | Framework errors use the same shape. |
+| 500 | `INTERNAL_ERROR` | Unexpected. The detail goes to the server log, never into the response. |
 
 A rejected input never touches stored data: validation runs before the old input is replaced.
 
@@ -97,18 +100,28 @@ exact answer is cheap to find with a good search.
 2. **Seed** (`GreedyLocalSearchSolver`). Greedily add the transporter that helps most, then swap transporters while
    swaps improve the cost. Gives a strong first answer to prune against.
 3. **Exact search** (`BranchAndBoundSolver`). Depth-first over "take this transporter / skip it". At each node the
-   lower bound gives every lane its cheapest quote still available deeper in the tree; branches that cannot beat the
-   best answer are cut. A transporter that would win no lane is never taken.
-4. **Budget.** The search stops after 50 million lane evaluations (about 1–3 s on the largest input the API accepts,
-   measured in `LargestAllowedProblemTest`). If it stops early the response says `"optimal": false`.
+   lower bound gives every lane its cheapest quote still available deeper in the tree, and an upper bound counts the
+   transporters that could still be used; branches that cannot beat the best answer on cost, or tie it while using
+   no more transporters, are cut. A transporter that is dearer than the current choice on every lane it quotes is
+   never taken.
+4. **Budgets.** Every search counts lane evaluations and stops when its budget is spent: 25 million for the exact
+   search, 10 million for the seed's cost-improving steps, 20 million for working out how many transporters a failed
+   request would have needed. If the exact search stops early the response says `"optimal": false`. The brief's cases
+   take milliseconds. On the largest inputs the API accepts, the tests measure under 0.1 s on a laptop
+   (`LargestAllowedProblemTest`) and 1–3 s in the Docker image limited to half a CPU; the free Render plan has less
+   CPU than that, so allow longer there. Budgets and caps are properties, so bigger hardware can raise them.
 
 **Rules**, applied the same way everywhere (and tested):
-- each lane goes to the cheapest chosen transporter that quoted it; an equal quote goes to the lower transporter id;
+- each lane goes to a chosen transporter whose quote is the lowest among the chosen ones;
 - lowest total cost wins; on equal cost, **more transporters used** wins (the brief asks to "utilize the maximum number
-  of transporters up to the limit"); then the smaller list of ids. The answer is therefore deterministic.
+  of transporters up to the limit"). This holds when quotes tie too: lanes on which several transporters quote the
+  same lowest price are shared out by a maximum matching so as many different transporters as possible get a lane
+  (lower ids preferred). If one lane is tied between two transporters and nothing else, the lower id gets it.
+- anything still tied after that is broken deterministically, so the same input always gives the same answer.
 
-Correctness is checked against a brute-force solver on 1,000 random problems, including heavy ties and lanes with
-no quotes (`BranchAndBoundSolverTest`, `CoverageAnalyzerTest`).
+Correctness is checked against brute-force and exhaustive checkers on about 1,800 random problems, including heavy
+ties and lanes with no quotes (`BranchAndBoundSolverTest`, `GreedyLocalSearchSolverTest`, `CoverageAnalyzerTest`,
+`AssignmentSolutionTest`).
 
 ### The brief's sample answers do not add up
 
@@ -140,18 +153,21 @@ config/     solver wiring, tunable limits (application.properties), OpenAPI meta
   out unchanged.
 - **Efficient storage.** Each input replaces the last with three bulk deletes and batched inserts. Entities have
   client-assigned ids and implement `Persistable`, so Spring Data does not run a `SELECT` before every insert.
-- **Concurrency.** A read-write lock keeps an assignment request from reading half of a replacement and keeps two
-  simultaneous submissions from colliding on primary keys. It is enough for one instance on an in-memory database; a
-  shared database would use a database lock instead.
+- **Concurrency.** A read-write lock, taken *around* the transaction, keeps an assignment request from reading half
+  of a replacement and keeps two simultaneous submissions from colliding on primary keys.
+  `InputDataStoreConcurrencyTest` runs 8 writers and 4 readers at once. It is enough for one instance on an
+  in-memory database; a shared database would use a database lock instead.
 
 ## Testing
 
-`./mvnw verify` runs **115 tests** and fails the build if line coverage is below 85% (it is about 97%).
+`./mvnw verify` runs **140 tests** and fails the build if line coverage is below 85% (it is about 97%).
 
-- **Optimizer**: the brief's cases, the CSV, tie-breaks, node-budget behaviour, brute-force comparison on random
-  problems, and the largest allowed input under a time limit.
+- **Optimizer**: the brief's cases, the CSV, tie handling (checked against an exhaustive search), budget behaviour,
+  brute-force comparison on random problems, and inputs at the edge of the size caps under a time limit.
 - **API** (`MockMvc` against the real app and H2): both endpoints with the brief's cases, every error path in the
-  table above, replacement semantics, and that a rejected input leaves the old data intact.
+  table above, quotes at and beyond the 1 trillion cap, replacement semantics, and that a rejected input leaves the
+  old data intact.
+- **Concurrency**: simultaneous replacements and reads never fail and never see half of a replacement.
 - **Docs**: Swagger UI is served, `/` redirects to it, and the OpenAPI document carries the examples.
 - **Postman**: import the collection, set `baseUrl`, run it; each request has assertions.
 
@@ -160,20 +176,25 @@ CI (`.github/workflows/ci.yml`) runs the same `./mvnw verify` on every push.
 ## Deploy (Render, free)
 
 `render.yaml` is a Blueprint: in Render choose **New → Blueprint**, pick this repo, and it builds the `Dockerfile`.
-Health check: `/actuator/health`. The container runs with a 320 MB heap for the 512 MB free plan and trusts the
+Health check: `/actuator/health`. The container runs with a 192 MB heap and trimmed thread and code-cache sizes for the 512 MB free plan, and trusts the
 proxy's forwarded headers so Swagger's "Try it out" calls the `https` origin.
 
 The free plan sleeps after 15 idle minutes (first request then takes about a minute). `.github/workflows/keep-alive.yml`
-pings the health URL every 10 minutes once you set the repository variable `LIVE_URL`.
+pings the health URL every 10 minutes once you set the repository variable `LIVE_URL`. GitHub runs scheduled
+workflows on a best-effort basis (runs can be late) and pauses them after 60 days without repository activity, so
+this keeps the app warm for a review window rather than guaranteeing it.
 
 ## Assumptions and limits
 
-- Quotes are **whole rupees** above zero; decimals are rejected. Ids are positive integers.
+- Quotes are **whole rupees**, above zero and at most 1 trillion; decimals and numbers sent as text are rejected.
+  Ids are positive integers.
 - Data is **in memory** (H2): it resets when the server restarts, and each new input replaces the previous one. A
   reviewer calls the input API first, then the assignment API. Swapping H2 for PostgreSQL is a datasource change
   (`spring.datasource.*`) plus the driver dependency; no code depends on H2.
 - A transporter may quote any subset of lanes. A lane may only be served by a transporter that quoted it.
 - `maxTransporters` larger than the number of transporters is fine.
-- Size caps (configurable, `transporter.limits.*`): 10,000 lanes, 1,000 transporters, 200,000 quotes, and 2 million
-  lanes × transporters. They keep a small free server safe from a huge request.
+- Size caps (configurable, `transporter.limits.*`): 2,000 lanes, 200 transporters, 10,000 quotes, 200,000
+  lanes × transporters and a 2 MB request body. They were chosen by measurement: in the Docker image limited to 512 MB
+  and half a CPU, the largest allowed input peaks at about 350 MB (300 MB is the idle JVM) and is stored in 3–7 s.
+  Bigger caps pushed the same test past 500 MB.
 - No authentication or UI, as the brief specifies.

@@ -19,8 +19,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class InputValidatorTest {
 
     private final InputValidator validator = new InputValidator(
-            new TransporterProperties(new TransporterProperties.Solver(1_000, 1_000),
-                    new TransporterProperties.Limits(3, 3, 4, 1_000)));
+            new TransporterProperties(new TransporterProperties.Solver(1_000, 1_000, 1_000),
+                    new TransporterProperties.Limits(3, 3, 4, 1_000, 1_000_000)));
 
     private static LaneDto lane(long id) {
         return new LaneDto(id, "From " + id, "To " + id);
@@ -74,7 +74,8 @@ class InputValidatorTest {
     @Test
     void enforcesTheTableSizeCap() {
         InputValidator tight = new InputValidator(new TransporterProperties(
-                new TransporterProperties.Solver(1_000, 1_000), new TransporterProperties.Limits(100, 100, 1_000, 5)));
+                new TransporterProperties.Solver(1_000, 1_000, 1_000),
+                new TransporterProperties.Limits(100, 100, 1_000, 5, 1_000_000)));
         InputRequest request = new InputRequest(List.of(lane(1), lane(2), lane(3)),
                 List.of(transporter(1, quote(1, 1)), transporter(2, quote(2, 1))));
 
@@ -93,7 +94,8 @@ class InputValidatorTest {
     @Test
     void capsTheNumberOfMessages() {
         InputValidator wide = new InputValidator(new TransporterProperties(
-                new TransporterProperties.Solver(1_000, 1_000), new TransporterProperties.Limits(100, 100, 1_000, 100_000)));
+                new TransporterProperties.Solver(1_000, 1_000, 1_000),
+                new TransporterProperties.Limits(100, 100, 1_000, 100_000, 1_000_000)));
         List<LaneQuoteDto> unknownLanes = IntStream.rangeClosed(1, 50).mapToObj(i -> quote(1_000 + i, 1)).toList();
         InputRequest request = new InputRequest(List.of(lane(1)),
                 List.of(new TransporterDto(1L, "T1", unknownLanes)));

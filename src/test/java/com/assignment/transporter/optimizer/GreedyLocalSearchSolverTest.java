@@ -42,6 +42,21 @@ class GreedyLocalSearchSolverTest {
     }
 
     @Test
+    void stopsWhenItsWorkBudgetIsSpentAndNeverReturnsAnInvalidAnswer() {
+        AssignmentProblem problem = ProblemFixtures.dataFile(Integer.MAX_VALUE);
+
+        SolverResult result = new GreedyLocalSearchSolver(1).solve(problem, 3);
+
+        assertThat(result.status()).isIn(Status.FEASIBLE, Status.UNKNOWN);
+        result.solutionIfAny().ifPresent(solution -> assertValid(problem, 3, solution));
+    }
+
+    @Test
+    void rejectsAZeroWorkBudget() {
+        assertThatIllegalArgumentException().isThrownBy(() -> new GreedyLocalSearchSolver(0));
+    }
+
+    @Test
     void rejectsALimitBelowOne() {
         assertThatIllegalArgumentException().isThrownBy(() -> solver.solve(briefTestCase1(), 0));
     }

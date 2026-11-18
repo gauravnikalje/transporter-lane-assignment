@@ -59,4 +59,20 @@ class AssignmentProblemTest {
     void rejectsNegativeCost() {
         assertThatIllegalArgumentException().isThrownBy(() -> AssignmentProblem.builder().quote(1, 1, -1));
     }
+
+    @Test
+    void rejectsACostAboveTheCapSoSumsCannotOverflow() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> AssignmentProblem.builder().quote(1, 1, AssignmentProblem.MAX_COST + 1))
+                .withMessageContaining("between 0 and");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> AssignmentProblem.builder().quote(1, 1, Long.MAX_VALUE));
+    }
+
+    @Test
+    void acceptsACostAtTheCap() {
+        AssignmentProblem problem = AssignmentProblem.builder().lane(1).quote(1, 1, AssignmentProblem.MAX_COST).build();
+
+        assertThat(problem.cost(0, 0)).isEqualTo(AssignmentProblem.MAX_COST);
+    }
 }

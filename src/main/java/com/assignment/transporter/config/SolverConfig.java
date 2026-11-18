@@ -16,11 +16,12 @@ public class SolverConfig {
 
     @Bean
     AssignmentSolver assignmentSolver(TransporterProperties properties) {
-        return new BranchAndBoundSolver(new GreedyLocalSearchSolver(), properties.solver().workBudget());
+        return new BranchAndBoundSolver(new GreedyLocalSearchSolver(properties.solver().seedWorkBudget()),
+                properties.solver().workBudget());
     }
 
     @Bean
     CoverageAnalyzer coverageAnalyzer(TransporterProperties properties) {
-        return new CoverageAnalyzer(properties.solver().coverageNodeBudget());
+        return new CoverageAnalyzer(properties.solver().coverageWorkBudget());
     }
 }

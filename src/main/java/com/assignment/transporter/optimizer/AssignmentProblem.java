@@ -22,6 +22,12 @@ public final class AssignmentProblem {
     /** Marks "this transporter did not quote this lane". */
     public static final long NO_QUOTE = Long.MAX_VALUE;
 
+    /**
+     * Largest accepted cost (one trillion). Keeps every sum of lane costs far below {@code Long.MAX_VALUE}, so the
+     * solvers can add costs without overflow checks in their inner loops.
+     */
+    public static final long MAX_COST = 1_000_000_000_000L;
+
     private final long[] laneIds;
     private final long[] transporterIds;
     private final long[][] costs;
@@ -82,8 +88,8 @@ public final class AssignmentProblem {
         }
 
         public Builder quote(long transporterId, long laneId, long cost) {
-            if (cost < 0 || cost == NO_QUOTE) {
-                throw new IllegalArgumentException("Cost must be zero or more and below Long.MAX_VALUE, got " + cost);
+            if (cost < 0 || cost > MAX_COST) {
+                throw new IllegalArgumentException("Cost must be between 0 and " + MAX_COST + ", got " + cost);
             }
             Map<Long, Long> byLane = quotesByTransporter.computeIfAbsent(transporterId, id -> new HashMap<>());
             if (byLane.putIfAbsent(laneId, cost) != null) {
@@ -94,6 +100,9 @@ public final class AssignmentProblem {
         }
 
         public AssignmentProblem build() {
+            if (lanes.size() > Long.MAX_VALUE / MAX_COST) {
+                throw new IllegalArgumentException("Too many lanes: " + lanes.size());
+            }
             long[] laneIds = lanes.stream().mapToLong(Long::longValue).toArray();
             Map<Long, Integer> laneIndexById = new HashMap<>();
             for (int i = 0; i < laneIds.length; i++) {

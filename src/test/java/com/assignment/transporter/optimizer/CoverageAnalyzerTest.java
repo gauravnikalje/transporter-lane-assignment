@@ -1,8 +1,10 @@
 package com.assignment.transporter.optimizer;
 
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static com.assignment.transporter.optimizer.ProblemFixtures.briefMainExample;
 import static com.assignment.transporter.optimizer.ProblemFixtures.briefTestCase1;
@@ -38,6 +40,30 @@ class CoverageAnalyzerTest {
     @Test
     void isEmptyWhenTheBudgetRunsOut() {
         assertThat(new CoverageAnalyzer(1).minimumTransportersToCover(briefMainExample())).isEmpty();
+    }
+
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
+    void stopsInTimeOnAHugeTableWhoseCoverIsHardToFind() {
+        // 2,000 lanes x 200 transporters, each lane quoted by only 1 or 2 transporters: a large search tree.
+        Random random = new Random(3);
+        AssignmentProblem.Builder builder = AssignmentProblem.builder();
+        for (int lane = 1; lane <= 2_000; lane++) {
+            builder.lane(lane);
+            int first = 1 + random.nextInt(200);
+            builder.quote(first, lane, 1_000);
+            int second = 1 + random.nextInt(200);
+            if (second != first) {
+                builder.quote(second, lane, 1_000);
+            }
+        }
+        long started = System.nanoTime();
+
+        // Same as the default of transporter.solver.coverage-work-budget.
+        new CoverageAnalyzer(20_000_000).minimumTransportersToCover(builder.build());
+
+        System.out.println("coverage analyzer on 2000x200: "
+                + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) + " ms");
     }
 
     @Test

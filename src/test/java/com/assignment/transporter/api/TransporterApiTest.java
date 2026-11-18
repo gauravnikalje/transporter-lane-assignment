@@ -349,6 +349,71 @@ class TransporterApiTest {
                 .andExpect(jsonPath("$.errors[0]", containsString("quoted lane 1 more than once")));
     }
 
+    @Test
+    void rejectsAHugeQuoteInsteadOfOverflowingLater() throws Exception {
+        // Found in review: this used to be accepted and then every assignment call returned a 500.
+        submit("""
+                {"lanes": [{"id": 1, "origin": "A", "destination": "B"}, {"id": 2, "origin": "C", "destination": "D"}],
+                 "transporters": [
+                   {"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": 1}, {"laneId": 2, "quote": 1}]},
+                   {"id": 2, "name": "T2", "laneQuotes": [{"laneId": 1, "quote": 5000000000000000000},
+                                                           {"laneId": 2, "quote": 9223372036854775807}]}]}""")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors[0]", containsString("must be less than or equal to 1000000000000")));
+    }
+
+    @Test
+    void acceptsTheLargestQuoteAndAddsThemWithoutOverflow() throws Exception {
+        submit("""
+                {"lanes": [{"id": 1, "origin": "A", "destination": "B"}, {"id": 2, "origin": "C", "destination": "D"}],
+                 "transporters": [
+                   {"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": 1000000000000},
+                                                           {"laneId": 2, "quote": 1000000000000}]}]}""")
+                .andExpect(status().isOk());
+
+        assign(1).andExpect(status().isOk()).andExpect(jsonPath("$.totalCost").value(2_000_000_000_000L));
+    }
+
+    @Test
+    void rejectsNumbersSentAsText() throws Exception {
+        submit("""
+                {"lanes": [{"id": 1, "origin": "A", "destination": "B"}],
+                 "transporters": [{"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": "5000"}]}]}""")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+        assign("{\"maxTransporters\": \"3\"}").andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+    }
+
+    @Test
+    void tiedQuotesAreSharedOutSoMoreTransportersAreUsed() throws Exception {
+        // Both transporters quote 100 on both lanes. Using both is as cheap as using one, and the brief wants the
+        // most transporters up to the limit.
+        submit("""
+                {"lanes": [{"id": 1, "origin": "A", "destination": "B"}, {"id": 2, "origin": "C", "destination": "D"}],
+                 "transporters": [
+                   {"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": 100}, {"laneId": 2, "quote": 100}]},
+                   {"id": 2, "name": "T2", "laneQuotes": [{"laneId": 1, "quote": 100}, {"laneId": 2, "quote": 100}]}]}""")
+                .andExpect(status().isOk());
+
+        assign(2).andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalCost").value(200))
+                .andExpect(jsonPath("$.selectedTransporters[0]").value(1))
+                .andExpect(jsonPath("$.selectedTransporters[1]").value(2))
+                .andExpect(jsonPath("$.assignments[0].transporterId").value(1))
+                .andExpect(jsonPath("$.assignments[1].transporterId").value(2));
+        assign(1).andExpect(status().isOk()).andExpect(jsonPath("$.selectedTransporters", hasSize(1)));
+    }
+
+    @Test
+    void acceptsNamesWithSurroundingSpaces() throws Exception {
+        submit("""
+                {"lanes": [{"id": 1, "origin": "  Mumbai ", "destination": "Delhi"}],
+                 "transporters": [{"id": 1, "name": "T1", "laneQuotes": [{"laneId": 1, "quote": 10}]}]}""")
+                .andExpect(status().isOk());
+    }
+
     // ---------------------------------------------------------------- framework errors use the same shape
 
     @Test

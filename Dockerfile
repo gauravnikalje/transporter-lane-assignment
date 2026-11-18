@@ -14,7 +14,9 @@ RUN useradd --system --uid 1001 app
 USER app
 WORKDIR /app
 COPY --from=build /build/target/app.jar app.jar
-# Small heap for a 512 MB host (Render's free plan).
-ENV JAVA_TOOL_OPTIONS="-Xmx320m -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m"
+# Sized for a 512 MB host (Render's free plan): small heap, thread stacks and code cache, so the whole process
+# stays well under the container limit. If the heap ever runs out the JVM exits and Render restarts it, which is
+# better than a half-dead process.
+ENV JAVA_TOOL_OPTIONS="-Xmx192m -Xss512k -XX:ReservedCodeCacheSize=48m -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:+ExitOnOutOfMemoryError"
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
