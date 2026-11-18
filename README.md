@@ -77,7 +77,7 @@ Every failure has one shape: `{"status": "error", "code": "...", "message": "...
 
 | HTTP | `code` | When |
 |---|---|---|
-| 400 | `VALIDATION_FAILED` | Missing or blank fields, quote ≤ 0 or above 1 trillion, `maxTransporters` < 1. `errors` lists each field. |
+| 400 | `VALIDATION_FAILED` | Missing or blank fields, quote ≤ 0 or above 1 trillion, `maxTransporters` < 1. `errors` lists each field (at most 20 lines, then "... and N more"). |
 | 400 | `INVALID_INPUT` | Duplicate lane or transporter ids, a quote for a lane that is not in the request, the same lane quoted twice, size caps exceeded. |
 | 400 | `MALFORMED_REQUEST` | Not JSON, or the wrong type: a number sent as text (`"5000"`) or a decimal quote such as `5000.75` (rejected, never rounded). Names the bad field. |
 | 409 | `NO_INPUT_DATA` | Assignment requested before any input. |
@@ -157,13 +157,18 @@ config/     solver wiring, tunable limits (application.properties), OpenAPI meta
 - **Concurrency.** A read-write lock, taken *around* the transaction, keeps an assignment request from reading half
   of a replacement and keeps two simultaneous submissions from colliding on primary keys.
   `InputDataStoreConcurrencyTest` runs 8 writers and 4 readers at once. It is enough for one instance on an
-  in-memory database; a shared database would use a database lock instead. Tomcat is limited to 8 request threads
-  and bodies to 1 MB, so a burst cannot hold enough parsed request data to exhaust the small heap: 60 simultaneous
-  near-limit bodies were all refused with 400 in the 512 MB container and the app kept serving.
+  in-memory database; a shared database would use a database lock instead.
+- **Hostile input.** A public API with no login must survive bad bodies, so the input is checked cheapest first:
+  sizes (counted without looking inside), then the per-field rules, then the whole-payload rules, and every list of
+  error messages is capped. Bodies are limited to 1 MB, Tomcat to 16 request threads, and a connection that stops
+  sending is cut off after 8 s. In the 512 MB container (half a CPU), 184 near-limit hostile bodies (a million empty
+  objects, a million `null`s, tens of thousands of invalid quotes), up to 60 at a time, were all refused with a 400;
+  the app stayed up and kept serving. With 15 stalled uploads the health check stays 200; with all 16 threads
+  stalled it recovers about 6 s later.
 
 ## Testing
 
-`./mvnw verify` runs **150 tests** and fails the build if line coverage is below 85% (it is about 97%).
+`./mvnw verify` runs **156 tests** and fails the build if line coverage is below 85% (it is about 97%).
 
 - **Optimizer**: the brief's cases, the CSV, tie handling (checked against an exhaustive search), budget behaviour,
   brute-force comparison on random problems, and inputs at the edge of the size caps under a time limit.
