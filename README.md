@@ -81,7 +81,7 @@ Every failure has one shape: `{"status": "error", "code": "...", "message": "...
 | 400 | `INVALID_INPUT` | Duplicate lane or transporter ids, a quote for a lane that is not in the request, the same lane quoted twice, size caps exceeded. |
 | 400 | `MALFORMED_REQUEST` | Not JSON, or the wrong type: a number sent as text (`"5000"`) or a decimal quote such as `5000.75` (rejected, never rounded). Names the bad field. |
 | 409 | `NO_INPUT_DATA` | Assignment requested before any input. |
-| 413 | `PAYLOAD_TOO_LARGE` | Request body above 2 MB. Refused before it is parsed. |
+| 413 | `PAYLOAD_TOO_LARGE` | Request body above 1 MB. Refused before it is parsed. |
 | 422 | `NO_FEASIBLE_ASSIGNMENT` | No set of ≤ N transporters covers every lane. Says how many are needed, or which lane nobody quoted. |
 | 422 | `SEARCH_LIMIT_REACHED` | A very large input used up the search budget before any valid assignment was found. |
 | 405 / 415 / 404 | `METHOD_NOT_ALLOWED` ... | Framework errors use the same shape. |
@@ -101,10 +101,11 @@ exact answer is cheap to find with a good search.
    swaps improve the cost. Gives a strong first answer to prune against.
 3. **Exact search** (`BranchAndBoundSolver`). Depth-first over "take this transporter / skip it". At each node the
    lower bound gives every lane its cheapest quote still available deeper in the tree, and an upper bound counts the
-   transporters that could still be used; branches that cannot beat the best answer on cost, or tie it while using
-   no more transporters, are cut. A transporter that is dearer than the current choice on every lane it quotes is
-   never taken.
-4. **Budgets.** Every search counts lane evaluations and stops when its budget is spent: 25 million for the exact
+   transporters that could still be used (never more than the largest matching of transporters to the lanes they
+   quoted); branches that cannot beat the best answer on cost, or tie it while using no more transporters, are cut.
+   A transporter that is dearer than the current choice on every lane it quotes is never taken.
+4. **Budgets.** Every search counts lane evaluations (a node costs a scan of the lanes, a complete choice costs what
+   it takes to build its answer, tie sharing included) and stops when its budget is spent: 25 million for the exact
    search, 10 million for the seed's cost-improving steps, 20 million for working out how many transporters a failed
    request would have needed. If the exact search stops early the response says `"optimal": false`. The brief's cases
    take milliseconds. On the largest inputs the API accepts, the tests measure under 0.1 s on a laptop
@@ -156,11 +157,13 @@ config/     solver wiring, tunable limits (application.properties), OpenAPI meta
 - **Concurrency.** A read-write lock, taken *around* the transaction, keeps an assignment request from reading half
   of a replacement and keeps two simultaneous submissions from colliding on primary keys.
   `InputDataStoreConcurrencyTest` runs 8 writers and 4 readers at once. It is enough for one instance on an
-  in-memory database; a shared database would use a database lock instead.
+  in-memory database; a shared database would use a database lock instead. Tomcat is limited to 8 request threads
+  and bodies to 1 MB, so a burst cannot hold enough parsed request data to exhaust the small heap: 60 simultaneous
+  near-limit bodies were all refused with 400 in the 512 MB container and the app kept serving.
 
 ## Testing
 
-`./mvnw verify` runs **140 tests** and fails the build if line coverage is below 85% (it is about 97%).
+`./mvnw verify` runs **150 tests** and fails the build if line coverage is below 85% (it is about 97%).
 
 - **Optimizer**: the brief's cases, the CSV, tie handling (checked against an exhaustive search), budget behaviour,
   brute-force comparison on random problems, and inputs at the edge of the size caps under a time limit.
@@ -194,7 +197,7 @@ this keeps the app warm for a review window rather than guaranteeing it.
 - A transporter may quote any subset of lanes. A lane may only be served by a transporter that quoted it.
 - `maxTransporters` larger than the number of transporters is fine.
 - Size caps (configurable, `transporter.limits.*`): 2,000 lanes, 200 transporters, 10,000 quotes, 200,000
-  lanes × transporters and a 2 MB request body. They were chosen by measurement: in the Docker image limited to 512 MB
+  lanes × transporters and a 1 MB request body. They were chosen by measurement: in the Docker image limited to 512 MB
   and half a CPU, the largest allowed input peaks at about 350 MB (300 MB is the idle JVM) and is stored in 3–7 s.
   Bigger caps pushed the same test past 500 MB.
 - No authentication or UI, as the brief specifies.
